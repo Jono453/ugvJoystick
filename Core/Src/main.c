@@ -21,6 +21,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdbool.h>
+#include <stdint.h>
 
 /* USER CODE END Includes */
 
@@ -35,7 +37,7 @@
 #define RC_CHANNEL_MAX 2010
 #define RC_RAW_MIN 1000
 #define RC_RAW_MAX 2000
-#define LED_TIME 250
+#define LED_TIME 100
 #define SBUS_MIN_OFFSET 173
 #define SBUS_MID_OFFSET 992
 #define SBUS_MAX_OFFSET 1811
@@ -51,16 +53,48 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc;
+
+UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart2;
+
+/* USER CODE BEGIN PV */
+uint16_t adc_val[2];   // adc_val[0] = ADC0 (PA0), adc_val[1] = ADC1 (PA1)
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_USART1_UART_Init(void);
+static void MX_USART2_UART_Init(void);
+static void MX_ADC_Init(void);
+/* USER CODE BEGIN PFP */
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+// ADC mapping function to suit SBUS range
+static inline int map_int(int x, int in_min, int in_max, int out_min, int out_max) {
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
 void sbusPreparePacket(uint8_t packet[], int channels[], bool isSignalLoss, bool isFailsafe){
 
     static int output[SBUS_CHANNEL_NUMBER] = {0};
 
     /*
-     * Map 1000-2000 with middle at 1500 chanel values to
+     * Map 1000-2000 with middle at 1500 channel values to
      * 173-1811 with middle at 992 S.BUS protocol requires
      */
     for (uint8_t i = 0; i < SBUS_CHANNEL_NUMBER; i++) {
-        output[i] = map(channels[i], RC_CHANNEL_MIN, RC_CHANNEL_MAX, SBUS_MIN_OFFSET, SBUS_MAX_OFFSET);
+        output[i] = map_int(channels[i], RC_CHANNEL_MIN, RC_CHANNEL_MAX, SBUS_MIN_OFFSET, SBUS_MAX_OFFSET);
     }
 
     uint8_t stateByte = 0x00;
@@ -98,56 +132,63 @@ void sbusPreparePacket(uint8_t packet[], int channels[], bool isSignalLoss, bool
     packet[23] = stateByte; //Flags byte
     packet[24] = SBUS_FRAME_FOOTER; //Footer
 }
-/* USER CODE END PM */
 
-/* Private variables ---------------------------------------------------------*/
-ADC_HandleTypeDef hadc;
-I2C_HandleTypeDef hi2c1;
-UART_HandleTypeDef huart2;
-
-/* USER CODE BEGIN PV */
-
-/* USER CODE END PV */
-
-/* Private function prototypes -----------------------------------------------*/
-void SystemClock_Config(void);
-static void MX_GPIO_Init(void);
-static void MX_ADC_Init(void);
-static void MX_I2C1_Init(void);
-static void MX_USART2_UART_Init(void);
-/* USER CODE BEGIN PFP */
-
-/* USER CODE END PFP */
-
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-
-// ADC mapping function to suit SBUS range
-static inline int map_int(int x, int in_min, int in_max, int out_min, int out_max) {
-    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-}
-
-int getMode(void)
-{
-    GPIO_PinState a = HAL_GPIO_ReadPin(FLIGHT_MODE_1_GPIO_Port, FLIGHT_MODE_1_Pin);
-    GPIO_PinState b = HAL_GPIO_ReadPin(FLIGHT_MODE_2_GPIO_Port, FLIGHT_MODE_2_Pin);
-
-    if (a == GPIO_PIN_RESET)   // switch A active (low)
-        return 1815;           // LOITER
-    else if (b == GPIO_PIN_RESET) // switch B active (low)
-        return 1165;           // HOLD
-    else
-        return 1425;           // MANUAL
-}
-
+// Get Arm switch
 int getArm()
 {
-	GPIO_PinState armState = HAL_GPIO_ReadPin(ARM_SWITCH_GPIO_Port, ARM_SWITCH_GPIO_Pin);
-
-	if (armState == GPIO_PIN_RESET)   // switch pressed (active low)
-		return 1950;                  // ARMED
+	if(!HAL_GPIO_ReadPin (ARM_SWITCH_GPIO_Port, ARM_SWITCH_Pin))
+	{
+		return 1950;
+	}
 	else
-		return 1150;                  // DISARMED
+	{
+		return 1150;
+	}
+}
+
+//Get Mode switch
+int getMode(void)
+{
+    if (!HAL_GPIO_ReadPin(FLIGHT_SWITCH_A_GPIO_Port, FLIGHT_SWITCH_A_Pin))
+        return 1815;  // A switch active (LOW)
+    else if (!HAL_GPIO_ReadPin(FLIGHT_SWITCH_B_GPIO_Port, FLIGHT_SWITCH_B_Pin))
+        return 1165;  // B switch active (LOW)
+    else
+        return 1425;  // Default / middle position
+}
+
+void readADC(void)
+{
+    ADC_ChannelConfTypeDef sConfig = {0};
+
+    // --- Channel 0: PA0 ---
+    sConfig.Channel = ADC_CHANNEL_4;
+    sConfig.Rank = ADC_RANK_CHANNEL_NUMBER;
+    sConfig.SamplingTime = ADC_SAMPLETIME_239CYCLES_5;
+    if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
+        Error_Handler();
+
+    HAL_ADC_Start(&hadc);
+    HAL_ADC_PollForConversion(&hadc, HAL_MAX_DELAY);
+    adc_val[0] = HAL_ADC_GetValue(&hadc);
+    HAL_ADC_Stop(&hadc);
+
+    // --- Channel 1: PA1 ---
+    sConfig.Channel = ADC_CHANNEL_8;
+    if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
+        Error_Handler();
+
+    HAL_ADC_Start(&hadc);
+    HAL_ADC_PollForConversion(&hadc, HAL_MAX_DELAY);
+    adc_val[1] = HAL_ADC_GetValue(&hadc);
+    HAL_ADC_Stop(&hadc);
+}
+
+// printf function for debug prints to FDTI on UART1
+int __io_putchar(int ch)
+{
+    HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
+    return ch;
 }
 /* USER CODE END 0 */
 
@@ -180,9 +221,9 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_ADC_Init();
-  MX_I2C1_Init();
+  MX_USART1_UART_Init();
   MX_USART2_UART_Init();
+  MX_ADC_Init();
   /* USER CODE BEGIN 2 */
 
   uint8_t sbusPacket[SBUS_PACKET_LENGTH];
@@ -208,40 +249,31 @@ int main(void)
 	uint32_t now = HAL_GetTick();
 
 	if (now > sbusTime) {
-	 // Read ADC values
-	 uint32_t steer = read_adc(ADC_CHANNEL_0); // implement helper
-	 uint32_t throttle = read_adc(ADC_CHANNEL_1);
 
-	 /*
-		ArduRover RC Channel Mapping
-		RC1 - Steer
-		RC1 - Unused
-		RC3 - Throttle
-		RC4 - Unused
-		RC5 is Mode Switch
-		  Manual - 1165
-		  Hold - 1425
-		  Guided - 1815
-		RC6 - Arming Switch
-	 */
+		// Read ADC values
+		readADC();
 
-	 rcChannels[0] = map_int(steer, 0, 4095, RC_RAW_MIN, RC_RAW_MAX);
-	 rcChannels[2] = map_int(throttle, 0, 4095, RC_RAW_MIN, RC_RAW_MAX);
-	 rcChannels[4] = getMode();
-	 rcChannels[5] = getArm();
+		rcChannels[0] = map_int(adc_val[1], 0, 4095, RC_RAW_MIN, RC_RAW_MAX);
+		rcChannels[2] = map_int(adc_val[0], 0, 4095, RC_RAW_MIN, RC_RAW_MAX);
+		rcChannels[4] = getMode();
+		rcChannels[5] = getArm();
 
-	 sbusPreparePacket(sbusPacket, rcChannels, false, false);
-	 HAL_UART_Transmit(&huart2, sbusPacket, SBUS_PACKET_LENGTH, HAL_MAX_DELAY);
+		sbusPreparePacket(sbusPacket, rcChannels, false, false);
+		HAL_UART_Transmit(&huart2, sbusPacket, SBUS_PACKET_LENGTH, HAL_MAX_DELAY);
 
-	 sbusTime = now + SBUS_UPDATE_RATE;
+		sbusTime = now + SBUS_UPDATE_RATE;
+	 }
+
+
+	//printf("Steer: %u | Throttle: %u\r\n",adc_val[1],adc_val[0]);
+
+	// LED toggle
+	if (now - ledTime > LED_TIME) {
+		ledState = !ledState;
+		HAL_GPIO_WritePin(STATUS_LED_GPIO_Port, STATUS_LED_Pin, ledState ? GPIO_PIN_SET : GPIO_PIN_RESET);
+		ledTime = now;
 	}
 
-	 // LED toggle
-	 if (now - ledTime > LED_TIME) {
-		 ledState = !ledState;
-		 HAL_GPIO_WritePin(STATUS_LED_GPIO_Port, STATUS_LED_Pin, ledState ? GPIO_PIN_SET : GPIO_PIN_RESET);
-		 ledTime = now;
-	 }
   }
   /* USER CODE END 3 */
 }
@@ -282,8 +314,8 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_I2C1;
-  PeriphClkInit.I2c1ClockSelection = RCC_I2C1CLKSOURCE_HSI;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1;
+  PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK1;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
@@ -349,7 +381,7 @@ static void MX_ADC_Init(void)
 
   /** Configure for the selected ADC regular channel to be converted.
   */
-  sConfig.Channel = ADC_CHANNEL_3;
+  sConfig.Channel = ADC_CHANNEL_4;
   if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -357,7 +389,23 @@ static void MX_ADC_Init(void)
 
   /** Configure for the selected ADC regular channel to be converted.
   */
-  sConfig.Channel = ADC_CHANNEL_4;
+  sConfig.Channel = ADC_CHANNEL_6;
+  if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel to be converted.
+  */
+  sConfig.Channel = ADC_CHANNEL_7;
+  if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel to be converted.
+  */
+  sConfig.Channel = ADC_CHANNEL_8;
   if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -369,50 +417,37 @@ static void MX_ADC_Init(void)
 }
 
 /**
-  * @brief I2C1 Initialization Function
+  * @brief USART1 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_I2C1_Init(void)
+static void MX_USART1_UART_Init(void)
 {
 
-  /* USER CODE BEGIN I2C1_Init 0 */
+  /* USER CODE BEGIN USART1_Init 0 */
 
-  /* USER CODE END I2C1_Init 0 */
+  /* USER CODE END USART1_Init 0 */
 
-  /* USER CODE BEGIN I2C1_Init 1 */
+  /* USER CODE BEGIN USART1_Init 1 */
 
-  /* USER CODE END I2C1_Init 1 */
-  hi2c1.Instance = I2C1;
-  hi2c1.Init.Timing = 0x0010020A;
-  hi2c1.Init.OwnAddress1 = 0;
-  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
-  hi2c1.Init.OwnAddress2 = 0;
-  hi2c1.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
-  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
-  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
-  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
   {
     Error_Handler();
   }
+  /* USER CODE BEGIN USART1_Init 2 */
 
-  /** Configure Analogue filter
-  */
-  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Configure Digital filter
-  */
-  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN I2C1_Init 2 */
-
-  /* USER CODE END I2C1_Init 2 */
+  /* USER CODE END USART1_Init 2 */
 
 }
 
@@ -470,8 +505,10 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(STATUS_LED_GPIO_Port, STATUS_LED_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : SPARE_IO_1_Pin FLIGHT_MODE_1_Pin ARM_SWITCH_Pin SPARE_IO_2_Pin */
-  GPIO_InitStruct.Pin = SPARE_IO_1_Pin|FLIGHT_MODE_1_Pin|ARM_SWITCH_Pin|SPARE_IO_2_Pin;
+  /*Configure GPIO pins : SPARE_IO_1_Pin SPARE_IO_2_Pin ARM_SWITCH_Pin FLIGHT_SWITCH_A_Pin
+                           FLIGHT_SWITCH_B_ACT_Pin */
+  GPIO_InitStruct.Pin = SPARE_IO_1_Pin|SPARE_IO_2_Pin|ARM_SWITCH_Pin|FLIGHT_SWITCH_A_Pin
+                          |FLIGHT_SWITCH_B_ACT_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
@@ -483,11 +520,11 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(STATUS_LED_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : FLIGHT_MODE_2_Pin */
-  GPIO_InitStruct.Pin = FLIGHT_MODE_2_Pin;
+  /*Configure GPIO pin : FLIGHT_SWITCH_B_Pin */
+  GPIO_InitStruct.Pin = FLIGHT_SWITCH_B_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(FLIGHT_MODE_2_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(FLIGHT_SWITCH_B_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
