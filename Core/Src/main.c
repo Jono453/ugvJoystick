@@ -63,7 +63,6 @@ UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-uint16_t adc_val[2];   // adc_val[0] = ADC0 (PA0), adc_val[1] = ADC1 (PA1)
 
 /* USER CODE END PV */
 
@@ -157,31 +156,43 @@ int getMode(void)
         return 1425;  // Default / middle position
 }
 
-void readADC(void)
+// Read both throttle and steer ADC channels (polling method)
+uint32_t readADC(uint32_t channel)
 {
     ADC_ChannelConfTypeDef sConfig = {0};
 
-    // --- Channel 0: PA0 ---
-    sConfig.Channel = ADC_CHANNEL_4;
+    // Disable ADC before changing channel
+    if (HAL_ADC_GetState(&hadc) & HAL_ADC_STATE_REG_BUSY)
+    {
+        HAL_ADC_Stop(&hadc);
+    }
+
+    if ((ADC1->CR & ADC_CR_ADEN) != 0)
+    {
+        ADC1->CR |= ADC_CR_ADDIS;           // Request disable
+        while ((ADC1->CR & ADC_CR_ADEN) != 0); // Wait until disabled
+    }
+
+    // Clear channel selection register
+    ADC1->CHSELR = 0;
+
+    // Configure channel
+    sConfig.Channel = channel;
     sConfig.Rank = ADC_RANK_CHANNEL_NUMBER;
     sConfig.SamplingTime = ADC_SAMPLETIME_239CYCLES_5;
-    if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
-        Error_Handler();
+    HAL_ADC_ConfigChannel(&hadc, &sConfig);
 
+    // Enable ADC
+    ADC1->CR |= ADC_CR_ADEN;
+    while ((ADC1->ISR & ADC_ISR_ADRDY) == 0); // Wait for ADC ready
+
+    // Start and read
     HAL_ADC_Start(&hadc);
     HAL_ADC_PollForConversion(&hadc, HAL_MAX_DELAY);
-    adc_val[0] = HAL_ADC_GetValue(&hadc);
+    uint32_t val = HAL_ADC_GetValue(&hadc);
     HAL_ADC_Stop(&hadc);
 
-    // --- Channel 1: PA1 ---
-    sConfig.Channel = ADC_CHANNEL_8;
-    if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
-        Error_Handler();
-
-    HAL_ADC_Start(&hadc);
-    HAL_ADC_PollForConversion(&hadc, HAL_MAX_DELAY);
-    adc_val[1] = HAL_ADC_GetValue(&hadc);
-    HAL_ADC_Stop(&hadc);
+    return val;
 }
 
 // printf function for debug prints to FDTI on UART1
@@ -251,21 +262,22 @@ int main(void)
 	if (now > sbusTime) {
 
 		// Read ADC values
-		readADC();
+		uint32_t steer = readADC(ADC_CHANNEL_8);
+		uint32_t throttle = readADC(ADC_CHANNEL_4);
 
-		rcChannels[0] = map_int(adc_val[1], 0, 4095, RC_RAW_MIN, RC_RAW_MAX);
-		rcChannels[2] = map_int(adc_val[0], 0, 4095, RC_RAW_MIN, RC_RAW_MAX);
-		rcChannels[4] = getMode();
-		rcChannels[5] = getArm();
+		rcChannels[0] = map_int(steer, 0, 4095, RC_RAW_MIN, RC_RAW_MAX);
+		rcChannels[2] = map_int(throttle, 0, 4095, RC_RAW_MIN, RC_RAW_MAX);
+		rcChannels[5] = getMode();
+		rcChannels[7] = getArm();
+
+		//printf("Steer Raw: %u | Steer SBUS: %u | Throttle Raw: %u | Throttle SBUS: %u \r\n",steer, map_int(steer, 0, 4095, RC_RAW_MIN, RC_RAW_MAX),throttle,
+		//		map_int(throttle, 0, 4095, RC_RAW_MIN, RC_RAW_MAX));
 
 		sbusPreparePacket(sbusPacket, rcChannels, false, false);
 		HAL_UART_Transmit(&huart2, sbusPacket, SBUS_PACKET_LENGTH, HAL_MAX_DELAY);
 
 		sbusTime = now + SBUS_UPDATE_RATE;
 	 }
-
-
-	//printf("Steer: %u | Throttle: %u\r\n",adc_val[1],adc_val[0]);
 
 	// LED toggle
 	if (now - ledTime > LED_TIME) {
@@ -363,41 +375,9 @@ static void MX_ADC_Init(void)
 
   /** Configure for the selected ADC regular channel to be converted.
   */
-  sConfig.Channel = ADC_CHANNEL_0;
+  sConfig.Channel = ADC_CHANNEL_4;
   sConfig.Rank = ADC_RANK_CHANNEL_NUMBER;
   sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
-  if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Configure for the selected ADC regular channel to be converted.
-  */
-  sConfig.Channel = ADC_CHANNEL_1;
-  if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Configure for the selected ADC regular channel to be converted.
-  */
-  sConfig.Channel = ADC_CHANNEL_4;
-  if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Configure for the selected ADC regular channel to be converted.
-  */
-  sConfig.Channel = ADC_CHANNEL_6;
-  if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Configure for the selected ADC regular channel to be converted.
-  */
-  sConfig.Channel = ADC_CHANNEL_7;
   if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
   {
     Error_Handler();
