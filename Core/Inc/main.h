@@ -57,24 +57,24 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define GMB_STEER_Pin GPIO_PIN_0
-#define GMB_STEER_GPIO_Port GPIOA
-#define GMB_THROTTLE_Pin GPIO_PIN_1
-#define GMB_THROTTLE_GPIO_Port GPIOA
-#define SBUS_TX_Pin GPIO_PIN_2
-#define SBUS_TX_GPIO_Port GPIOA
+#define TEST_NUCLEO_THROTTLE_Pin GPIO_PIN_4
+#define TEST_NUCLEO_THROTTLE_GPIO_Port GPIOA
 #define SPARE_IO_1_Pin GPIO_PIN_5
 #define SPARE_IO_1_GPIO_Port GPIOA
-#define FLIGHT_MODE_1_Pin GPIO_PIN_6
-#define FLIGHT_MODE_1_GPIO_Port GPIOA
-#define ARM_SWITCH_Pin GPIO_PIN_7
-#define ARM_SWITCH_GPIO_Port GPIOA
+#define TEST_NUCLEO_STEER_Pin GPIO_PIN_0
+#define TEST_NUCLEO_STEER_GPIO_Port GPIOB
 #define SPARE_IO_2_Pin GPIO_PIN_8
 #define SPARE_IO_2_GPIO_Port GPIOA
+#define ARM_SWITCH_Pin GPIO_PIN_11
+#define ARM_SWITCH_GPIO_Port GPIOA
+#define FLIGHT_SWITCH_A_Pin GPIO_PIN_12
+#define FLIGHT_SWITCH_A_GPIO_Port GPIOA
+#define FLIGHT_SWITCH_B_ACT_Pin GPIO_PIN_15
+#define FLIGHT_SWITCH_B_ACT_GPIO_Port GPIOA
 #define STATUS_LED_Pin GPIO_PIN_4
 #define STATUS_LED_GPIO_Port GPIOB
-#define FLIGHT_MODE_2_Pin GPIO_PIN_7
-#define FLIGHT_MODE_2_GPIO_Port GPIOB
+#define FLIGHT_SWITCH_B_Pin GPIO_PIN_7
+#define FLIGHT_SWITCH_B_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 
